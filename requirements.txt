@@ -1,4 +1,5 @@
-streamlit
+streamlit 
 pandas
 selenium
-webdriver-manager
+webdriver_manager 
+openpyxl
