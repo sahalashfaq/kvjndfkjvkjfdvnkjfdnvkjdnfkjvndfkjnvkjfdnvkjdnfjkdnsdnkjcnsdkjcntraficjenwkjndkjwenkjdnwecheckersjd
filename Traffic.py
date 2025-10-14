@@ -44,7 +44,7 @@ if uploaded_file:
 
     total_urls = len(df)
     estimated_total_time = total_urls * max_wait_time
-    st.markdown("<p style='color:#4B0082;'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:var(--indigo-color);'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
     st.markdown("<p style='font-size:large;margin-bottom:0px;'>Preview of uploaded file:</p>", unsafe_allow_html=True)
     st.dataframe(df.head())
 
@@ -247,4 +247,3 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("All URLs processed successfully!")
-
