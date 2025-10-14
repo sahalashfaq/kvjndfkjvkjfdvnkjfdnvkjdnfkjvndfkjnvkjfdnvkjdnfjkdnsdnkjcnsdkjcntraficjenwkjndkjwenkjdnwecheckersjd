@@ -14,13 +14,15 @@ import os
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 
-# Embed minimal CSS directly
-st.markdown("""
-<style>
-    .states_p { font-size: 16px; margin: 5px 0; }
-    p { font-size: 14px; color: #333; }
-</style>
-""", unsafe_allow_html=True)
+# Load CSS
+def load_css():
+    try:
+        with open("style.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except:
+        pass
+
+load_css()
 
 # ---------------------------- 
 # 1️⃣ User inputs
@@ -245,3 +247,4 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("All URLs processed successfully!")
+
