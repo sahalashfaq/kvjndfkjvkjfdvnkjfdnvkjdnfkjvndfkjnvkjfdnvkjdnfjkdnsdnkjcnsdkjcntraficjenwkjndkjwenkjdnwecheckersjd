@@ -10,6 +10,7 @@ import time
 import re
 from io import BytesIO
 from datetime import timedelta
+import os
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 
@@ -71,14 +72,32 @@ if uploaded_file:
         chrome_options.add_argument('--disable-setuid-sandbox')
         chrome_options.add_argument('--remote-debugging-port=9222')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36')
-        chrome_options.binary_location = "/usr/bin/chromium-browser"  # Streamlit Cloud's Chromium path
+
+        # Try common Chromium binary paths
+        possible_binary_paths = [
+            "/usr/bin/chromium-browser",
+            "/usr/lib/chromium-browser/chromium-browser",
+            "/usr/bin/chromium"
+        ]
+        binary_found = False
+        for binary_path in possible_binary_paths:
+            if os.path.exists(binary_path):
+                chrome_options.binary_location = binary_path
+                binary_found = True
+                break
+
+        if not binary_found:
+            st.error("Chromium binary not found at common paths. Ensure 'chromium-browser' is installed via packages.txt.")
+            st.stop()
 
         try:
             # Use webdriver_manager to handle chromedriver, matching Chromium 141
             service = Service(ChromeDriverManager(driver_version="141.0.7390.65").install())
             driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Log browser version for debugging
+            st.write(f"Chromium version: {driver.capabilities['browserVersion']}")
         except Exception as e:
-            st.error(f"Failed to initialize WebDriver: {str(e)}. Please check if ChromeDriver matches Chromium version 141.0.7390.65.")
+            st.error(f"Failed to initialize WebDriver: {str(e)}. Ensure ChromeDriver matches Chromium version 141.0.7390.65 and chromium-browser is installed.")
             st.stop()
 
         # Results and counters
@@ -93,6 +112,11 @@ if uploaded_file:
                 try:
                     ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={user_url}&mode=subdomains"
                     driver.get(ahrefs_url)
+
+                    # Log browser console for debugging
+                    browser_logs = driver.get_log('browser')
+                    if browser_logs:
+                        st.write(f"Browser logs for {user_url}: {browser_logs}")
 
                     # ---------------------------- 
                     # Cloudflare handling
