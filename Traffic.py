@@ -13,7 +13,7 @@ from datetime import timedelta
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 
-# Embed minimal CSS directly to avoid file I/O issues on Streamlit Cloud
+# Embed minimal CSS directly
 st.markdown("""
 <style>
     .states_p { font-size: 16px; margin: 5px 0; }
@@ -61,17 +61,25 @@ if uploaded_file:
 
         processing_text.markdown("**Processing... Please wait!**")
 
-        # Initialize Chrome driver with headless options for Streamlit Cloud
+        # Initialize Chrome driver with enhanced options
         chrome_options = webdriver.ChromeOptions()
-        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--headless=new')  # Use new headless mode
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-setuid-sandbox')
+        chrome_options.add_argument('--remote-debugging-port=9222')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36')
+        chrome_options.binary_location = "/usr/bin/chromium-browser"  # Streamlit Cloud's Chromium path
 
-        # Use webdriver_manager to handle chromium-driver
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        try:
+            # Use webdriver_manager to handle chromedriver, matching Chromium 141
+            service = Service(ChromeDriverManager(driver_version="141.0.7390.65").install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except Exception as e:
+            st.error(f"Failed to initialize WebDriver: {str(e)}. Please check if ChromeDriver matches Chromium version 141.0.7390.65.")
+            st.stop()
 
         # Results and counters
         results = []
