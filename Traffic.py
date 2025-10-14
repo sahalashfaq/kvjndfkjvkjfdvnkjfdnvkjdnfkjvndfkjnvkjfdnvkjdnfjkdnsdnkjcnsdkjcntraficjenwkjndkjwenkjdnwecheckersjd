@@ -11,18 +11,22 @@ import re
 from io import BytesIO
 from datetime import timedelta
 import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 
-# Load CSS
-def load_css():
-    try:
-        with open("style.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-    except:
-        pass
-
-load_css()
+# Embed minimal CSS directly
+st.markdown("""
+<style>
+    .states_p { font-size: 16px; margin: 5px 0; }
+    p { font-size: 14px; color: #333; }
+    .debug-log { font-size: 12px; color: #666; }
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------- 
 # 1️⃣ User inputs
@@ -30,7 +34,7 @@ load_css()
 uploaded_file = st.file_uploader("Upload CSV/XLSX file containing URLs To check website's Traffic", type=["csv", "xlsx"])
 max_wait_time = st.number_input(
     "Set maximum wait time per URL (seconds, min 30)",
-    min_value=30, max_value=50000, value=30, step=5
+    min_value=30, max_value=50000, value=60, step=5
 )
 
 # ---------------------------- 
@@ -44,7 +48,7 @@ if uploaded_file:
 
     total_urls = len(df)
     estimated_total_time = total_urls * max_wait_time
-    st.markdown("<p style='color:var(--indigo-color);'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#4B0082;'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
     st.markdown("<p style='font-size:large;margin-bottom:0px;'>Preview of uploaded file:</p>", unsafe_allow_html=True)
     st.dataframe(df.head())
 
@@ -61,6 +65,7 @@ if uploaded_file:
         progress_bar = st.progress(0)
         table_area = st.empty()
         stats_area = st.empty()
+        debug_area = st.empty()
 
         processing_text.markdown("**Processing... Please wait!**")
 
@@ -79,13 +84,16 @@ if uploaded_file:
         possible_binary_paths = [
             "/usr/bin/chromium-browser",
             "/usr/lib/chromium-browser/chromium-browser",
-            "/usr/bin/chromium"
+            "/usr/bin/chromium",
+            "/snap/bin/chromium"
         ]
         binary_found = False
         for binary_path in possible_binary_paths:
             if os.path.exists(binary_path):
                 chrome_options.binary_location = binary_path
                 binary_found = True
+                logger.info(f"Chromium binary found at: {binary_path}")
+                debug_area.markdown(f"<p class='debug-log'>Chromium binary found at: {binary_path}</p>", unsafe_allow_html=True)
                 break
 
         if not binary_found:
@@ -97,10 +105,16 @@ if uploaded_file:
             service = Service(ChromeDriverManager(driver_version="141.0.7390.65").install())
             driver = webdriver.Chrome(service=service, options=chrome_options)
             # Log browser version for debugging
-            st.write(f"Chromium version: {driver.capabilities['browserVersion']}")
+            browser_version = driver.capabilities['browserVersion']
+            logger.info(f"Chromium version: {browser_version}")
+            debug_area.markdown(f"<p class='debug-log'>Chromium version: {browser_version}</p>", unsafe_allow_html=True)
         except Exception as e:
+            logger.error(f"WebDriver initialization failed: {str(e)}")
             st.error(f"Failed to initialize WebDriver: {str(e)}. Ensure ChromeDriver matches Chromium version 141.0.7390.65 and chromium-browser is installed.")
             st.stop()
+
+        # Enable browser logging
+        driver.execute_script("console.log('Browser logging enabled');")
 
         # Results and counters
         results = []
@@ -112,30 +126,44 @@ if uploaded_file:
             status = "Success"
             with st.spinner(f"Processing URL {idx}/{total_urls}: {user_url}"):
                 try:
+                    # Clean URL and construct Ahrefs URL
+                    user_url = user_url.strip()
+                    if not user_url.startswith(('http://', 'https://')):
+                        user_url = 'https://' + user_url
                     ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={user_url}&mode=subdomains"
+                    logger.info(f"Navigating to: {ahrefs_url}")
                     driver.get(ahrefs_url)
 
-                    # Log browser console for debugging
-                    browser_logs = driver.get_log('browser')
-                    if browser_logs:
-                        st.write(f"Browser logs for {user_url}: {browser_logs}")
+                    # Log page source for debugging
+                    page_source = driver.page_source[:500]  # Truncate for brevity
+                    logger.info(f"Page source preview: {page_source}")
+                    debug_area.markdown(f"<p class='debug-log'>Page source preview for {user_url}: {page_source}</p>", unsafe_allow_html=True)
 
                     # ---------------------------- 
                     # Cloudflare handling
                     # ---------------------------- 
                     start_time = time.time()
                     cf_cleared = False
-                    while True:
+                    max_attempts = 3
+                    attempt = 1
+                    while attempt <= max_attempts:
+                        logger.info(f"Cloudflare check attempt {attempt} for {user_url}")
                         cookies = {c['name']: c['value'] for c in driver.get_cookies()}
                         if "cf_clearance" in cookies:
                             cf_cleared = True
+                            logger.info(f"Cloudflare cleared for {user_url}")
+                            debug_area.markdown(f"<p class='debug-log'>Cloudflare cleared for {user_url}</p>", unsafe_allow_html=True)
                             break
                         if time.time() - start_time > max_wait_time:
+                            logger.warning(f"Cloudflare timeout after {max_wait_time} seconds for {user_url}")
                             break
-                        time.sleep(2)
+                        time.sleep(5)  # Increased interval for Cloudflare
+                        attempt += 1
 
                     if not cf_cleared:
                         status = "Failed: Cloudflare"
+                        logger.error(f"Cloudflare not cleared for {user_url}")
+                        debug_area.markdown(f"<p class='debug-log'>Failed: Cloudflare not cleared for {user_url}</p>", unsafe_allow_html=True)
                         raise Exception("Cloudflare not cleared")
 
                     # ---------------------------- 
@@ -145,30 +173,56 @@ if uploaded_file:
                         modal_elements = WebDriverWait(driver, max_wait_time).until(
                             EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".ReactModalPortal"))
                         )
+                        logger.info(f"Modal found for {user_url}")
                     except:
                         status = "Failed: No modal"
+                        logger.error(f"No modal found for {user_url}")
+                        debug_area.markdown(f"<p class='debug-log'>Failed: No modal found for {user_url}</p>", unsafe_allow_html=True)
                         raise Exception("No modal found")
 
                     elem = modal_elements[0]
 
-                    def safe_extract_css(selector):
+                    def safe_extract_css(selector, fallback_selector=None):
                         try:
-                            return WebDriverWait(elem, max_wait_time).until(
+                            element = WebDriverWait(elem, max_wait_time).until(
                                 EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                            ).text.strip()
+                            )
+                            text = element.text.strip()
+                            logger.info(f"Extracted {selector}: {text}")
+                            return text
                         except:
+                            if fallback_selector:
+                                try:
+                                    element = WebDriverWait(elem, max_wait_time).until(
+                                        EC.presence_of_element_located((By.CSS_SELECTOR, fallback_selector))
+                                    )
+                                    text = element.text.strip()
+                                    logger.info(f"Extracted fallback {fallback_selector}: {text}")
+                                    return text
+                                except:
+                                    logger.error(f"Failed to extract {selector} or {fallback_selector}")
+                                    return "Error"
+                            logger.error(f"Failed to extract {selector}")
                             return "Error"
 
-                    # Extract data
-                    website_name = safe_extract_css("h2")
+                    # Extract data with fallback selectors
+                    website_name = safe_extract_css("h2", "h1")
                     website_traffic = safe_extract_css(
-                        "span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob"
+                        "span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob",
+                        "span[data-testid='traffic-value']"
                     )
                     traffic_value = safe_extract_css(
-                        "span.css-6s0ffe.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1jyb9g4"
+                        "span.css-6s0ffe.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1jyb9g4",
+                        "span[data-testid='traffic-value-metric']"
                     )
-                    top_country_raw = safe_extract_css("table:nth-of-type(1) tbody tr:first-child")
-                    top_keyword_raw = safe_extract_css("table:nth-of-type(2) tbody tr:first-child")
+                    top_country_raw = safe_extract_css(
+                        "table:nth-of-type(1) tbody tr:first-child",
+                        "table[data-testid='top-countries'] tbody tr:first-child"
+                    )
+                    top_keyword_raw = safe_extract_css(
+                        "table:nth-of-type(2) tbody tr:first-child",
+                        "table[data-testid='top-keywords'] tbody tr:first-child"
+                    )
 
                     # Process country
                     country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
@@ -178,6 +232,7 @@ if uploaded_file:
                     else:
                         top_country = top_country_raw
                         top_country_share = "Error"
+                    logger.info(f"Top country: {top_country}, Share: {top_country_share}")
 
                     # Process keyword
                     keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
@@ -189,6 +244,7 @@ if uploaded_file:
                         top_keyword = top_keyword_raw
                         keyword_position = "Error"
                         top_keyword_traffic = "Error"
+                    logger.info(f"Top keyword: {top_keyword}, Position: {keyword_position}, Traffic: {top_keyword_traffic}")
 
                     # Append results
                     results.append({
@@ -199,6 +255,8 @@ if uploaded_file:
                         "Top Country Share": top_country_share
                     })
                     success_count += 1
+                    logger.info(f"Successfully processed {user_url}")
+                    debug_area.markdown(f"<p class='debug-log'>Successfully processed {user_url}</p>", unsafe_allow_html=True)
 
                 except Exception as e:
                     results.append({
@@ -209,6 +267,8 @@ if uploaded_file:
                         "Top Country Share": "Error",
                     })
                     fail_count += 1
+                    logger.error(f"Error processing {user_url}: {str(e)}")
+                    debug_area.markdown(f"<p class='debug-log'>Error processing {user_url}: {str(e)}</p>", unsafe_allow_html=True)
 
                 # ---------------------------- 
                 # Live updates
@@ -228,7 +288,11 @@ if uploaded_file:
                 elapsed = time.time() - batch_start_time
                 avg_per_url = elapsed / idx
                 remaining_time = avg_per_url * (total_urls - idx)
-                
+                time_placeholder.markdown(
+                    f"<p class='states_p'>Estimated time remaining: {timedelta(seconds=int(remaining_time))}</p>",
+                    unsafe_allow_html=True
+                )
+
         driver.quit()
         processing_text.markdown("**Batch processing completed!**")
 
