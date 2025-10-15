@@ -1,7 +1,9 @@
 import os
 import streamlit as st
 import pandas as pd
-import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -40,6 +42,75 @@ max_wait_time = st.number_input(
 )
 
 # -------------------------------------------------------
+# Fixed Scraping Function
+# -------------------------------------------------------
+def scrape_ahrefs_data(driver, url, max_wait_time):
+    try:
+        ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
+        driver.get(ahrefs_url)
+        
+        # Wait for the main modal to appear (using your XPath)
+        WebDriverWait(driver, max_wait_time).until(
+            EC.presence_of_element_located((By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[1]/div[2]/div/div/div/span"))
+        )
+
+        # Extract website name using your exact XPath
+        website_name = driver.find_element(By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[1]/div[2]/div/div/div/span").text.strip()
+        
+        # Extract traffic value using your exact XPath
+        website_traffic = driver.find_element(By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[2]/div[2]/div/div/div/span").text.strip()
+
+        # Extract top country data from first table
+        top_country_element = driver.find_element(By.CSS_SELECTOR, "table:nth-of-type(1) tbody tr:first-child")
+        top_country_raw = top_country_element.text.strip() if top_country_element else "N/A"
+
+        # Extract top keyword data from second table  
+        top_keyword_element = driver.find_element(By.CSS_SELECTOR, "table:nth-of-type(2) tbody tr:first-child")
+        top_keyword_raw = top_keyword_element.text.strip() if top_keyword_element else "N/A"
+
+        # Parse country data
+        country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
+        if country_match:
+            top_country = country_match.group(1)
+            top_country_share = country_match.group(2)
+        else:
+            top_country, top_country_share = top_country_raw, "N/A"
+
+        # Parse keyword data
+        keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
+        if keyword_match:
+            top_keyword = keyword_match.group(1)
+            keyword_position = keyword_match.group(2)
+            top_keyword_traffic = keyword_match.group(3)
+        else:
+            top_keyword, keyword_position, top_keyword_traffic = top_keyword_raw, "N/A", "N/A"
+
+        return {
+            "URL": url,
+            "Website": website_name,
+            "Website Traffic": website_traffic,
+            "Top Country": top_country,
+            "Top Country Share": top_country_share,
+            "Top Keyword": top_keyword,
+            "Keyword Position": keyword_position,
+            "Keyword Traffic": top_keyword_traffic,
+            "Status": "Success"
+        }
+
+    except Exception as e:
+        return {
+            "URL": url,
+            "Website": "Error",
+            "Website Traffic": "Error",
+            "Top Country": "Error",
+            "Top Country Share": "Error",
+            "Top Keyword": "Error",
+            "Keyword Position": "Error",
+            "Keyword Traffic": "Error",
+            "Status": f"Failed: {str(e)}"
+        }
+
+# -------------------------------------------------------
 # Process file
 # -------------------------------------------------------
 if uploaded_file:
@@ -60,108 +131,47 @@ if uploaded_file:
         processing_text.markdown("**Processing... Please wait!**")
 
         # -------------------------------------------------------
-        # Configure undetected_chromedriver
+        # Use Standard Selenium like Facebook Scraper (MORE RELIABLE)
         # -------------------------------------------------------
-        options = uc.ChromeOptions()
-        options.headless = True
-        options.binary_location = "/usr/bin/chromium-browser"
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-software-rasterizer")
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.binary_location = "/usr/bin/chromium-browser"
 
-        driver = uc.Chrome(options=options, driver_executable_path="/usr/bin/chromedriver")
+        service = Service(executable_path="/usr/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
         results, success_count, fail_count = [], 0, 0
         batch_start_time = time.time()
 
         # -------------------------------------------------------
-        # Main scraping loop
+        # Main scraping loop - FIXED
         # -------------------------------------------------------
         for idx, raw_url in enumerate(df[url_column], start=1):
-            try:
-                url = str(raw_url).strip()
-                if not url.startswith(("http://", "https://")):
-                    url = "https://" + url
+            url = str(raw_url).strip()
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
 
-                ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
-                with st.spinner(f"Processing {idx}/{total_urls}: {url}"):
-                    driver.get(ahrefs_url)
-
-                    # --- Cloudflare handling ---
-                    start_time = time.time()
-                    while "cf_clearance" not in {c["name"]: c["value"] for c in driver.get_cookies()}:
-                        if time.time() - start_time > max_wait_time:
-                            raise Exception("Cloudflare not cleared in time.")
-                        time.sleep(3)
-
-                    # --- Wait for modal ---
-                    modal = WebDriverWait(driver, max_wait_time).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".ReactModalPortal"))
-                    )
-
-                    def safe_extract(selector):
-                        try:
-                            element = WebDriverWait(modal, max_wait_time).until(
-                                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                            )
-                            return element.text.strip()
-                        except:
-                            return "N/A"
-
-                    website_name = safe_extract("h2")
-                    website_traffic = safe_extract(
-                        "span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob"
-                    )
-                    top_country_raw = safe_extract("table:nth-of-type(1) tbody tr:first-child")
-                    top_keyword_raw = safe_extract("table:nth-of-type(2) tbody tr:first-child")
-
-                    # --- Parse ---
-                    country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
-                    top_country, top_country_share = (
-                        (country_match.group(1), country_match.group(2))
-                        if country_match else (top_country_raw, "N/A")
-                    )
-
-                    keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
-                    if keyword_match:
-                        top_keyword = keyword_match.group(1)
-                        keyword_position = keyword_match.group(2)
-                        top_keyword_traffic = keyword_match.group(3)
-                    else:
-                        top_keyword, keyword_position, top_keyword_traffic = top_keyword_raw, "N/A", "N/A"
-
-                    results.append({
-                        "URL": url,
-                        "Website": website_name,
-                        "Website Traffic": website_traffic,
-                        "Top Country": top_country,
-                        "Top Country Share": top_country_share,
-                        "Top Keyword": top_keyword,
-                        "Keyword Position": keyword_position,
-                        "Keyword Traffic": top_keyword_traffic,
-                        "Status": "Success"
-                    })
-                    success_count += 1
-
-            except Exception as e:
-                results.append({
-                    "URL": raw_url,
-                    "Website": "Error",
-                    "Website Traffic": "Error",
-                    "Top Country": "Error",
-                    "Top Country Share": "Error",
-                    "Top Keyword": "Error",
-                    "Keyword Position": "Error",
-                    "Keyword Traffic": "Error",
-                    "Status": f"Failed: {str(e)}"
-                })
+            # Use the fixed scraping function
+            result = scrape_ahrefs_data(driver, url, max_wait_time)
+            results.append(result)
+            
+            if result["Status"] == "Success":
+                success_count += 1
+            else:
                 fail_count += 1
 
-            # --- Progress updates ---
-            progress_bar.progress(int(idx / total_urls * 100))
+            # Progress updates
+            progress = int(idx / total_urls * 100)
+            progress_bar.progress(progress)
+            
+            # Update results table
             table_area.dataframe(pd.DataFrame(results))
+            
+            # Time estimation
             elapsed = time.time() - batch_start_time
             avg_per_url = elapsed / idx
             remaining_time = avg_per_url * (total_urls - idx)
@@ -169,6 +179,8 @@ if uploaded_file:
                 f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
                 unsafe_allow_html=True
             )
+            
+            # Stats update
             stats_area.markdown(
                 f"""
                 <p>Total URLs: <b>{total_urls}</b></p>
@@ -182,7 +194,7 @@ if uploaded_file:
         driver.quit()
         processing_text.markdown("✅ **Batch processing completed successfully!**")
 
-        # --- Download results ---
+        # Download results
         if results:
             result_df = pd.DataFrame(results)
             csv_buffer = BytesIO()
@@ -193,4 +205,5 @@ if uploaded_file:
                 file_name="ahrefs_batch_results.csv",
                 mime="text/csv"
             )
-        st.success("🎉 All URLs processed successfully!")
+        
+        st.success(f"🎉 Processing complete! Success: {success_count}, Failed: {fail_count}")
