@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
-from seleniumbase import Driver
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -11,10 +11,10 @@ from io import BytesIO
 from datetime import timedelta
 
 # -------------------------------------------------------
-# Environment fix for Streamlit Cloud
+# Chromium Paths for Streamlit Cloud
 # -------------------------------------------------------
-os.environ["SELENIUM_BROWSER_BINARY_LOCATION"] = "/usr/bin/chromium-browser"
-os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
+CHROME_BIN = "/usr/bin/chromium-browser"
+CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
 
 # -------------------------------------------------------
 # Streamlit Page Setup
@@ -26,29 +26,20 @@ def load_css():
         with open("style.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning("⚠️ No CSS file found, using default Streamlit style.")
+        pass
 
 load_css()
 
-uploaded_file = st.file_uploader(
-    "📁 Upload CSV/XLSX file containing URLs to check traffic:",
-    type=["csv", "xlsx"]
-)
-max_wait_time = st.number_input(
-    "⏱️ Set maximum wait time per URL (seconds)",
-    min_value=30, max_value=300, value=60, step=5
-)
+uploaded_file = st.file_uploader("📁 Upload CSV/XLSX file containing URLs:", type=["csv", "xlsx"])
+max_wait_time = st.number_input("⏱️ Wait time per URL (seconds)", 30, 300, 60, 5)
 
 # -------------------------------------------------------
 # Handle File Upload
 # -------------------------------------------------------
 if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
-
+    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
     total_urls = len(df)
+
     st.markdown("<p style='color:#6a0dad;'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
     st.dataframe(df.head())
 
@@ -57,45 +48,48 @@ if uploaded_file:
 
     if start_btn:
         processing_text = st.empty()
-        time_placeholder = st.empty()
         progress_bar = st.progress(0)
         table_area = st.empty()
         stats_area = st.empty()
+        time_placeholder = st.empty()
+
         processing_text.markdown("**Processing... Please wait!**")
 
-        # ✅ Correct Driver initialization (no direct path args)
-        driver = Driver(browser="chrome", headless=True, uc=True)
+        # -------------------------------------------------------
+        # Initialize Undetected ChromeDriver
+        # -------------------------------------------------------
+        options = uc.ChromeOptions()
+        options.binary_location = CHROME_BIN
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--window-size=1920,1080")
+
+        driver = uc.Chrome(options=options, driver_executable_path=CHROMEDRIVER_PATH)
 
         results = []
         success_count = 0
         fail_count = 0
         batch_start_time = time.time()
 
+        # -------------------------------------------------------
+        # Process Each URL
+        # -------------------------------------------------------
         for idx, raw_url in enumerate(df[url_column], start=1):
+            url = str(raw_url).strip()
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
+
             try:
-                url = str(raw_url).strip()
-                if not url.startswith(("http://", "https://")):
-                    url = "https://" + url
-
-                ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
                 with st.spinner(f"Processing {idx}/{total_urls}: {url}"):
-                    driver.uc_open_with_reconnect(ahrefs_url, reconnect_time=10)
+                    driver.get(ahrefs_url)
+                    WebDriverWait(driver, max_wait_time).until(
+                        lambda d: "traffic" in d.page_source.lower()
+                    )
 
-                    # Wait for Cloudflare clearance
-                    start_time = time.time()
-                    while True:
-                        try:
-                            driver.uc_gui_click_captcha()
-                        except Exception:
-                            pass
-                        cookies = {c['name']: c['value'] for c in driver.get_cookies()}
-                        if "cf_clearance" in cookies:
-                            break
-                        if time.time() - start_time > max_wait_time:
-                            raise Exception("Cloudflare not cleared in time.")
-                        time.sleep(3)
-
-                    # Wait for modal content
                     modal = WebDriverWait(driver, max_wait_time).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, ".ReactModalPortal"))
                     )
@@ -110,7 +104,9 @@ if uploaded_file:
                             return "N/A"
 
                     website_name = safe_extract("h2")
-                    website_traffic = safe_extract("span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob")
+                    website_traffic = safe_extract(
+                        "span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob"
+                    )
                     top_country_raw = safe_extract("table:nth-of-type(1) tbody tr:first-child")
                     top_keyword_raw = safe_extract("table:nth-of-type(2) tbody tr:first-child")
 
@@ -144,7 +140,7 @@ if uploaded_file:
 
             except Exception as e:
                 results.append({
-                    "URL": raw_url,
+                    "URL": url,
                     "Website": "Error",
                     "Website Traffic": "Error",
                     "Top Country": "Error",
@@ -156,14 +152,16 @@ if uploaded_file:
                 })
                 fail_count += 1
 
-            # Live progress updates
+            # -------------------------------------------------------
+            # Live Progress Update
+            # -------------------------------------------------------
             progress_bar.progress(int(idx / total_urls * 100))
             table_area.dataframe(pd.DataFrame(results))
             elapsed = time.time() - batch_start_time
-            avg_per_url = elapsed / idx
-            remaining_time = avg_per_url * (total_urls - idx)
+            avg_time = elapsed / idx
+            remaining = avg_time * (total_urls - idx)
             time_placeholder.markdown(
-                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
+                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining))}</b></p>",
                 unsafe_allow_html=True
             )
             stats_area.markdown(
@@ -177,9 +175,8 @@ if uploaded_file:
             )
 
         driver.quit()
-        processing_text.markdown("✅ **Batch processing completed successfully!**")
+        processing_text.markdown("✅ **Batch processing completed!**")
 
-        # CSV Export
         if results:
             result_df = pd.DataFrame(results)
             csv_buffer = BytesIO()
