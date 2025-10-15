@@ -11,13 +11,13 @@ from io import BytesIO
 from datetime import timedelta
 
 # -------------------------------------------------------
-# Chromium Paths for Streamlit Cloud
+# Environment paths for Streamlit Cloud
 # -------------------------------------------------------
-CHROME_BIN = "/usr/bin/chromium-browser"
-CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
+os.environ["CHROME_BIN"] = "/usr/bin/chromium-browser"
+os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
 
 # -------------------------------------------------------
-# Streamlit Page Setup
+# Streamlit setup
 # -------------------------------------------------------
 st.set_page_config(page_title="Ahrefs Batch Traffic Extractor", layout="centered")
 
@@ -30,16 +30,21 @@ def load_css():
 
 load_css()
 
-uploaded_file = st.file_uploader("📁 Upload CSV/XLSX file containing URLs:", type=["csv", "xlsx"])
-max_wait_time = st.number_input("⏱️ Wait time per URL (seconds)", 30, 300, 60, 5)
+uploaded_file = st.file_uploader(
+    "📁 Upload CSV/XLSX file containing URLs to check traffic:",
+    type=["csv", "xlsx"]
+)
+max_wait_time = st.number_input(
+    "⏱️ Maximum wait time per URL (seconds)",
+    min_value=30, max_value=300, value=60, step=5
+)
 
 # -------------------------------------------------------
-# Handle File Upload
+# Process file
 # -------------------------------------------------------
 if uploaded_file:
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
     total_urls = len(df)
-
     st.markdown("<p style='color:#6a0dad;'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
     st.dataframe(df.head())
 
@@ -48,48 +53,50 @@ if uploaded_file:
 
     if start_btn:
         processing_text = st.empty()
+        time_placeholder = st.empty()
         progress_bar = st.progress(0)
         table_area = st.empty()
         stats_area = st.empty()
-        time_placeholder = st.empty()
-
         processing_text.markdown("**Processing... Please wait!**")
 
         # -------------------------------------------------------
-        # Initialize Undetected ChromeDriver
+        # Configure undetected_chromedriver
         # -------------------------------------------------------
         options = uc.ChromeOptions()
-        options.binary_location = CHROME_BIN
-        options.add_argument("--headless=new")
+        options.headless = True
+        options.binary_location = "/usr/bin/chromium-browser"
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-extensions")
-        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-software-rasterizer")
 
-        driver = uc.Chrome(options=options, driver_executable_path=CHROMEDRIVER_PATH)
+        driver = uc.Chrome(options=options, driver_executable_path="/usr/bin/chromedriver")
 
-        results = []
-        success_count = 0
-        fail_count = 0
+        results, success_count, fail_count = [], 0, 0
         batch_start_time = time.time()
 
         # -------------------------------------------------------
-        # Process Each URL
+        # Main scraping loop
         # -------------------------------------------------------
         for idx, raw_url in enumerate(df[url_column], start=1):
-            url = str(raw_url).strip()
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
-            ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
-
             try:
+                url = str(raw_url).strip()
+                if not url.startswith(("http://", "https://")):
+                    url = "https://" + url
+
+                ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
                 with st.spinner(f"Processing {idx}/{total_urls}: {url}"):
                     driver.get(ahrefs_url)
-                    WebDriverWait(driver, max_wait_time).until(
-                        lambda d: "traffic" in d.page_source.lower()
-                    )
 
+                    # --- Cloudflare handling ---
+                    start_time = time.time()
+                    while "cf_clearance" not in {c["name"]: c["value"] for c in driver.get_cookies()}:
+                        if time.time() - start_time > max_wait_time:
+                            raise Exception("Cloudflare not cleared in time.")
+                        time.sleep(3)
+
+                    # --- Wait for modal ---
                     modal = WebDriverWait(driver, max_wait_time).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, ".ReactModalPortal"))
                     )
@@ -110,11 +117,11 @@ if uploaded_file:
                     top_country_raw = safe_extract("table:nth-of-type(1) tbody tr:first-child")
                     top_keyword_raw = safe_extract("table:nth-of-type(2) tbody tr:first-child")
 
+                    # --- Parse ---
                     country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
                     top_country, top_country_share = (
                         (country_match.group(1), country_match.group(2))
-                        if country_match
-                        else (top_country_raw, "N/A")
+                        if country_match else (top_country_raw, "N/A")
                     )
 
                     keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
@@ -140,7 +147,7 @@ if uploaded_file:
 
             except Exception as e:
                 results.append({
-                    "URL": url,
+                    "URL": raw_url,
                     "Website": "Error",
                     "Website Traffic": "Error",
                     "Top Country": "Error",
@@ -152,16 +159,14 @@ if uploaded_file:
                 })
                 fail_count += 1
 
-            # -------------------------------------------------------
-            # Live Progress Update
-            # -------------------------------------------------------
+            # --- Progress updates ---
             progress_bar.progress(int(idx / total_urls * 100))
             table_area.dataframe(pd.DataFrame(results))
             elapsed = time.time() - batch_start_time
-            avg_time = elapsed / idx
-            remaining = avg_time * (total_urls - idx)
+            avg_per_url = elapsed / idx
+            remaining_time = avg_per_url * (total_urls - idx)
             time_placeholder.markdown(
-                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining))}</b></p>",
+                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
                 unsafe_allow_html=True
             )
             stats_area.markdown(
@@ -175,8 +180,9 @@ if uploaded_file:
             )
 
         driver.quit()
-        processing_text.markdown("✅ **Batch processing completed!**")
+        processing_text.markdown("✅ **Batch processing completed successfully!**")
 
+        # --- Download results ---
         if results:
             result_df = pd.DataFrame(results)
             csv_buffer = BytesIO()
