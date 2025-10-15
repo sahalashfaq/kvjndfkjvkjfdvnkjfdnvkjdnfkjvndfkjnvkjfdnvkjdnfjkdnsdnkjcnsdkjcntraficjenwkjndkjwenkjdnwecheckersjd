@@ -13,12 +13,6 @@ from io import BytesIO
 from datetime import timedelta
 
 # -------------------------------------------------------
-# Environment paths for Streamlit Cloud
-# -------------------------------------------------------
-os.environ["CHROME_BIN"] = "/usr/bin/chromium-browser"
-os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
-
-# -------------------------------------------------------
 # Streamlit setup
 # -------------------------------------------------------
 st.set_page_config(page_title="Ahrefs Batch Traffic Extractor", layout="centered")
@@ -131,17 +125,17 @@ if uploaded_file:
         processing_text.markdown("**Processing... Please wait!**")
 
         # -------------------------------------------------------
-        # Use Standard Selenium like Facebook Scraper (MORE RELIABLE)
+        # USE EXACT SAME SETUP AS WORKING FACEBOOK SCRAPER
         # -------------------------------------------------------
         chrome_options = Options()
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.binary_location = "/usr/bin/chromium-browser"
-
-        service = Service(executable_path="/usr/bin/chromedriver")
+        
+        # Use the same driver path as your working Facebook scraper
+        driver_path = "/usr/bin/chromedriver"
+        
+        service = Service(executable_path=driver_path)
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         results, success_count, fail_count = [], 0, 0
