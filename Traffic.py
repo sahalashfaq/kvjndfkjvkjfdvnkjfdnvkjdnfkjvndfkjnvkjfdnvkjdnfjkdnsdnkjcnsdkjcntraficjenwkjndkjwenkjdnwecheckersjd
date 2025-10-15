@@ -4,6 +4,8 @@ import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -12,6 +14,7 @@ import time
 import re
 from io import BytesIO
 from datetime import timedelta
+import random
 
 # -------------------------------------------------------
 # Streamlit setup
@@ -28,11 +31,11 @@ def load_css():
 load_css()
 
 uploaded_file = st.file_uploader(
-    "📁 Upload CSV/XLSX file containing URLs to check traffic:",
+    "Upload CSV/XLSX file containing URLs to check traffic:",
     type=["csv", "xlsx"]
 )
 max_wait_time = st.number_input(
-    "⏱️ Maximum wait time per URL (seconds)",
+    "Maximum wait time per URL (seconds)",
     min_value=30, max_value=300, value=120, step=5
 )
 
@@ -40,16 +43,17 @@ max_wait_time = st.number_input(
 # ADVANCED Cloudflare Bypass with Clicking Method
 # -------------------------------------------------------
 def bypass_cloudflare(driver, max_wait_time):
-    """Your proven Cloudflare bypass method with clicking"""
     try:
-        # Check if Cloudflare challenge is present
+        # Check for Cloudflare challenge
         cloudflare_indicators = [
             "//*[contains(text(), 'Checking if the site connection is secure')]",
             "//*[contains(text(), 'Checking your browser')]",
             "//*[contains(@id, 'challenge-form')]",
             "//*[contains(@class, 'cf-browser-verification')]",
             "//input[@type='checkbox']",
-            "//*[contains(@id, 'cf-content')]"
+            "//*[contains(@id, 'cf-content')]",
+            "//*[contains(@id, 'cf-captcha')]",  # Added for CAPTCHA detection
+            "//iframe[@title='Widget containing a Cloudflare security challenge']",
         ]
         
         cloudflare_detected = False
@@ -62,18 +66,25 @@ def bypass_cloudflare(driver, max_wait_time):
                 continue
         
         if not cloudflare_detected:
-            return True  # No Cloudflare detected
+            st.info("No Cloudflare challenge detected.")
+            return True
 
-        st.warning("🛡️ Cloudflare protection detected - Attempting bypass...")
+        st.warning("Cloudflare protection detected - Attempting bypass...")
         
-        # Method 1: Try to find and click the challenge button
+        # Simulate human-like scrolling
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
+        time.sleep(random.uniform(0.5, 1.5))
+        driver.execute_script("window.scrollTo(0, 0);")
+        
+        # Method 1: Handle checkbox CAPTCHA
         challenge_selectors = [
             "input[type='checkbox']",
             ".cf-btn-wrap .mark",
             "#challenge-form input[type='submit']",
             "button[type='submit']",
             ".hcaptcha-box",
-            ".cf-cta-refresh"
+            ".cf-cta-refresh",
+            "input#checkbox",  # Common hCaptcha/reCAPTCHA checkbox
         ]
         
         for selector in challenge_selectors:
@@ -81,89 +92,117 @@ def bypass_cloudflare(driver, max_wait_time):
                 challenge_element = WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                 )
-                # Use ActionChains for more human-like click
                 actions = ActionChains(driver)
-                actions.move_to_element(challenge_element).pause(1).click().perform()
-                st.info("✅ Clicked Cloudflare challenge button")
-                time.sleep(5)  # Wait for challenge to process
+                # Simulate human-like mouse movement
+                actions.move_to_element_with_offset(challenge_element, random.randint(-5, 5), random.randint(-5, 5))
+                actions.pause(random.uniform(0.3, 0.7)).click().perform()
+                st.info("Clicked Cloudflare challenge button")
+                time.sleep(random.uniform(3, 5))  # Wait for processing
                 break
             except:
                 continue
 
-        # Method 2: Try to find and click by text
+        # Method 2: Handle text-based challenges
         challenge_texts = [
             "Verify you are human",
             "I am human",
             "Verify",
             "Continue",
-            "Submit"
+            "Submit",
+            "Click to verify",
         ]
         
         for text in challenge_texts:
             try:
-                xpath = f"//*[contains(text(), '{text}')]"
+                xpath = f"//*[contains(text(), '{text}') or contains(@value, '{text}')]"
                 challenge_element = WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, xpath))
                 )
                 actions = ActionChains(driver)
-                actions.move_to_element(challenge_element).pause(0.5).click().perform()
-                st.info(f"✅ Clicked '{text}' button")
-                time.sleep(5)
+                actions.move_to_element_with_offset(challenge_element, random.randint(-5, 5), random.randint(-5, 5))
+                actions.pause(random.uniform(0.3, 0.7)).click().perform()
+                st.info(f"Clicked '{text}' button")
+                time.sleep(random.uniform(3, 5))
                 break
             except:
                 continue
 
-        # Wait for Cloudflare to clear
+        # Method 3: Handle iframe-based CAPTCHAs (e.g., hCaptcha, reCAPTCHA)
+        try:
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                if "captcha" in iframe.get_attribute("title").lower():
+                    driver.switch_to.frame(iframe)
+                    try:
+                        checkbox = WebDriverWait(driver, 5).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='checkbox']"))
+                        )
+                        actions = ActionChains(driver)
+                        actions.move_to_element_with_offset(checkbox, random.randint(-5, 5), random.randint(-5, 5))
+                        actions.pause(random.uniform(0.3, 0.7)).click().perform()
+                        st.info("Clicked CAPTCHA checkbox in iframe")
+                        time.sleep(random.uniform(3, 5))
+                    except:
+                        pass
+                    driver.switch_to.default_content()
+                    break
+        except:
+            pass
+
+        # Wait for Cloudflare to clear with retries
         start_time = time.time()
-        while time.time() - start_time < max_wait_time - 30:
-            # Check if we're still on Cloudflare
-            current_url = driver.current_url
+        retry_count = 0
+        max_retries = 3
+        
+        while time.time() - start_time < max_wait_time - 30 and retry_count < max_retries:
             page_source = driver.page_source.lower()
-            
             cloudflare_still_present = any([
                 "checking your browser" in page_source,
                 "checking if the site connection is secure" in page_source,
                 "ddos protection" in page_source,
-                "cf-browser-verification" in page_source
+                "cf-browser-verification" in page_source,
+                "captcha" in page_source,
             ])
             
             if not cloudflare_still_present:
-                st.success("🎉 Cloudflare bypass successful!")
+                st.success("Cloudflare bypass successful!")
                 return True
                 
-            # Try to find and interact with any new challenge elements
+            # Try interacting with any new challenge elements
             try:
-                # Look for any interactive elements that might be challenges
-                interactive_elements = driver.find_elements(By.CSS_SELECTOR, 
-                    "button, input[type='submit'], input[type='button'], [role='button']"
+                interactive_elements = driver.find_elements(By.CSS_SELECTOR,
+                    "button, input[type='submit'], input[type='button'], [role='button'], input[type='checkbox']"
                 )
                 for element in interactive_elements:
                     try:
                         if element.is_displayed() and element.is_enabled():
                             text = element.text.lower()
-                            if any(keyword in text for keyword in ['verify', 'continue', 'submit', 'human']):
+                            if any(keyword in text for keyword in ['verify', 'continue', 'submit', 'human', 'captcha']):
                                 actions = ActionChains(driver)
-                                actions.move_to_element(element).pause(0.3).click().perform()
-                                st.info("🔄 Clicked additional challenge element")
-                                time.sleep(3)
+                                actions.move_to_element_with_offset(element, random.randint(-5, 5), random.randint(-5, 5))
+                                actions.pause(random.uniform(0.3, 0.7)).click().perform()
+                                st.info("Clicked additional challenge element")
+                                time.sleep(random.uniform(2, 4))
                                 break
                     except:
                         continue
             except:
                 pass
                 
-            time.sleep(3)
+            time.sleep(random.uniform(2, 4))
+            retry_count += 1
 
         # Final check
         page_source = driver.page_source.lower()
-        if "cloudflare" not in page_source and "checking your browser" not in page_source:
+        if "cloudflare" not in page_source and "checking your browser" not in page_source and "captcha" not in page_source:
+            st.success("Cloudflare bypass successful!")
             return True
         else:
-            st.error("❌ Cloudflare bypass failed")
+            st.error("Cloudflare bypass failed after retries")
             return False
 
     except Exception as e:
-        st.error(f"❌ Error during Cloudflare bypass: {str(e)}")
+        st.error(f"Error during Cloudflare bypass: {str(e)}")
         return False
 
 # -------------------------------------------------------
@@ -273,16 +312,56 @@ def scrape_ahrefs_data(driver, url, max_wait_time):
         }
 
 # -------------------------------------------------------
-# Process file (Rest of the code remains the same)
+# Driver Setup Function
+# -------------------------------------------------------
+def setup_driver():
+    chrome_options = Options()
+    # Optionally disable headless for better success (comment out if running locally)
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    
+    # Add a realistic user-agent
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+    chrome_options.add_argument(f"user-agent={user_agent}")
+    
+    # Set window size to mimic a real browser
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    # Optional: Add proxy for residential IPs (replace with your proxy details)
+    # chrome_options.add_argument("--proxy-server=http://your_proxy:port")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    
+    # Apply stealth settings
+    stealth(
+        driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+    )
+    
+    # Remove webdriver property
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    return driver
+
+# -------------------------------------------------------
+# Process file
 # -------------------------------------------------------
 if uploaded_file:
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
     total_urls = len(df)
-    st.markdown("<p style='color:#6a0dad;'>∵ More Time ∝ More Perfect Results</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#6a0dad;'>More Time = More Perfect Results</p>", unsafe_allow_html=True)
     st.dataframe(df.head())
 
     url_column = st.selectbox("Select the column containing URLs", df.columns)
-    start_btn = st.button("🚀 Start Processing")
+    start_btn = st.button("Start Processing")
 
     if start_btn:
         processing_text = st.empty()
@@ -292,21 +371,8 @@ if uploaded_file:
         stats_area = st.empty()
         processing_text.markdown("**Processing... Please wait!**")
 
-        # Driver setup with stealth options
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        driver_path = "/usr/bin/chromedriver"
-        service = Service(executable_path=driver_path)
-        
         try:
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            driver = setup_driver()
         except Exception as e:
             st.error(f"Failed to start Chrome driver: {e}")
             st.stop()
@@ -339,7 +405,7 @@ if uploaded_file:
             avg_per_url = elapsed / idx
             remaining_time = avg_per_url * (total_urls - idx)
             time_placeholder.markdown(
-                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
+                f"<p>Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
                 unsafe_allow_html=True
             )
             
@@ -347,25 +413,25 @@ if uploaded_file:
                 f"""
                 <p>Total URLs: <b>{total_urls}</b></p>
                 <p>Processed: <b>{idx}</b></p>
-                <p>✅ Success: <b>{success_count}</b></p>
-                <p>🚫 Blocked: <b>{blocked_count}</b></p>
-                <p>❌ Failed: <b>{fail_count}</b></p>
+                <p>Success: <b>{success_count}</b></p>
+                <p>Blocked: <b>{blocked_count}</b></p>
+                <p>Failed: <b>{fail_count}</b></p>
                 """,
                 unsafe_allow_html=True
             )
 
         driver.quit()
-        processing_text.markdown("✅ **Batch processing completed successfully!**")
+        processing_text.markdown("**Batch processing completed successfully!**")
 
         if results:
             result_df = pd.DataFrame(results)
             csv_buffer = BytesIO()
             result_df.to_csv(csv_buffer, index=False)
             st.download_button(
-                "📥 Download Results as CSV",
+                "Download Results as CSV",
                 csv_buffer.getvalue(),
                 file_name="ahrefs_batch_results.csv",
                 mime="text/csv"
             )
         
-        st.success(f"🎉 Processing complete! Success: {success_count}, Blocked: {blocked_count}, Failed: {fail_count}")
+        st.success(f"Processing complete! Success: {success_count}, Blocked: {blocked_count}, Failed: {fail_count}")
