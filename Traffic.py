@@ -9,26 +9,26 @@ import re
 from io import BytesIO
 from datetime import timedelta
 
-# ----------------------------
-# Streamlit Page Config
-# ----------------------------
+# -------------------------------------------------------
+# Streamlit Page Setup
+# -------------------------------------------------------
 st.set_page_config(page_title="Ahrefs Batch Traffic Extractor", layout="centered")
 
-# ----------------------------
-# CSS Loader
-# ----------------------------
+# -------------------------------------------------------
+# Optional CSS Loader
+# -------------------------------------------------------
 def load_css():
     try:
         with open("style.css") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning("⚠️ No custom CSS found. Using default Streamlit style.")
+        st.warning("⚠️ No CSS file found, using default style.")
 
 load_css()
 
-# ----------------------------
+# -------------------------------------------------------
 # User Inputs
-# ----------------------------
+# -------------------------------------------------------
 uploaded_file = st.file_uploader(
     "📁 Upload CSV/XLSX file containing URLs to check traffic:",
     type=["csv", "xlsx"]
@@ -36,15 +36,12 @@ uploaded_file = st.file_uploader(
 
 max_wait_time = st.number_input(
     "⏱️ Set maximum wait time per URL (seconds)",
-    min_value=30,
-    max_value=300,
-    value=60,
-    step=5
+    min_value=30, max_value=300, value=60, step=5
 )
 
-# ----------------------------
-# Handle File Upload
-# ----------------------------
+# -------------------------------------------------------
+# File Handling
+# -------------------------------------------------------
 if uploaded_file:
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
@@ -59,9 +56,9 @@ if uploaded_file:
     url_column = st.selectbox("Select the column containing URLs", df.columns)
     start_btn = st.button("🚀 Start Processing")
 
-    # ----------------------------
-    # Begin Extraction
-    # ----------------------------
+    # -------------------------------------------------------
+    # Start Processing
+    # -------------------------------------------------------
     if start_btn:
         processing_text = st.empty()
         time_placeholder = st.empty()
@@ -71,8 +68,15 @@ if uploaded_file:
 
         processing_text.markdown("**Processing... Please wait!**")
 
-        # Initialize SeleniumBase Driver (auto undetected mode)
-        driver = Driver(uc=True, headless=True)
+        # ✅ Fixed: Explicitly use Streamlit Cloud's system Chromium binaries
+        driver = Driver(
+            browser="chrome",
+            uc=True,
+            headless=True,
+            binary_location="/usr/bin/chromium-browser",
+            driver_path="/usr/bin/chromedriver"
+        )
+
         results = []
         success_count = 0
         fail_count = 0
@@ -98,7 +102,6 @@ if uploaded_file:
                             driver.uc_gui_click_captcha()
                         except Exception:
                             pass
-
                         cookies = {c['name']: c['value'] for c in driver.get_cookies()}
                         if "cf_clearance" in cookies:
                             cf_cleared = True
@@ -108,7 +111,7 @@ if uploaded_file:
                         time.sleep(3)
 
                     if not cf_cleared:
-                        raise Exception("Cloudflare verification failed.")
+                        raise Exception("Cloudflare verification failed")
 
                     # ----------------------------
                     # Extract Modal Content
@@ -132,7 +135,7 @@ if uploaded_file:
                     top_keyword_raw = safe_extract("table:nth-of-type(2) tbody tr:first-child")
 
                     # ----------------------------
-                    # Data Parsing
+                    # Parse Extracted Data
                     # ----------------------------
                     country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
                     if country_match:
@@ -149,9 +152,6 @@ if uploaded_file:
                     else:
                         top_keyword, keyword_position, top_keyword_traffic = top_keyword_raw, "N/A", "N/A"
 
-                    # ----------------------------
-                    # Append Results
-                    # ----------------------------
                     results.append({
                         "URL": url,
                         "Website": website_name,
@@ -180,7 +180,7 @@ if uploaded_file:
                 fail_count += 1
 
             # ----------------------------
-            # Progress Update
+            # Progress Updates
             # ----------------------------
             progress_bar.progress(int(idx / total_urls * 100))
             table_area.dataframe(pd.DataFrame(results))
@@ -189,7 +189,7 @@ if uploaded_file:
             avg_per_url = elapsed / idx
             remaining_time = avg_per_url * (total_urls - idx)
             time_placeholder.markdown(
-                f"<p style='font-size:14px;'>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
+                f"<p>⏳ Estimated time remaining: <b>{timedelta(seconds=int(remaining_time))}</b></p>",
                 unsafe_allow_html=True
             )
 
@@ -206,9 +206,9 @@ if uploaded_file:
         driver.quit()
         processing_text.markdown("✅ **Batch processing completed successfully!**")
 
-        # ----------------------------
+        # -------------------------------------------------------
         # CSV Export
-        # ----------------------------
+        # -------------------------------------------------------
         if results:
             result_df = pd.DataFrame(results)
             csv_buffer = BytesIO()
@@ -220,4 +220,3 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("🎉 All URLs processed!")
-
