@@ -32,38 +32,82 @@ uploaded_file = st.file_uploader(
 )
 max_wait_time = st.number_input(
     "⏱️ Maximum wait time per URL (seconds)",
-    min_value=30, max_value=300, value=60, step=5
+    min_value=30, max_value=300, value=90, step=5
 )
 
 # -------------------------------------------------------
-# Fixed Scraping Function
+# IMPROVED Scraping Function with Cloudflare handling
 # -------------------------------------------------------
 def scrape_ahrefs_data(driver, url, max_wait_time):
     try:
         ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains"
         driver.get(ahrefs_url)
         
-        # Wait for the main modal to appear (using your XPath)
-        WebDriverWait(driver, max_wait_time).until(
-            EC.presence_of_element_located((By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[1]/div[2]/div/div/div/span"))
-        )
-
-        # Extract website name using your exact XPath
-        website_name = driver.find_element(By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[1]/div[2]/div/div/div/span").text.strip()
+        # Wait for page to load and check for Cloudflare
+        time.sleep(5)
         
-        # Extract traffic value using your exact XPath
-        website_traffic = driver.find_element(By.XPATH, "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[2]/div[2]/div/div/div/span").text.strip()
+        # Check if we're blocked by Cloudflare
+        page_source = driver.page_source.lower()
+        if "cloudflare" in page_source or "checking your browser" in page_source or "ddos protection" in page_source:
+            st.warning(f"⚠️ Cloudflare protection detected for {url}. Waiting...")
+            
+            # Wait for Cloudflare to clear (up to max_wait_time)
+            start_time = time.time()
+            while time.time() - start_time < max_wait_time - 10:
+                time.sleep(3)
+                page_source = driver.page_source.lower()
+                if "cloudflare" not in page_source and "checking your browser" not in page_source:
+                    break
+            else:
+                return {
+                    "URL": url,
+                    "Website": "Blocked",
+                    "Website Traffic": "Blocked",
+                    "Top Country": "Blocked",
+                    "Top Country Share": "Blocked",
+                    "Top Keyword": "Blocked",
+                    "Keyword Position": "Blocked",
+                    "Keyword Traffic": "Blocked",
+                    "Status": "Blocked by Cloudflare"
+                }
+        
+        # Try multiple selectors with better error handling
+        def safe_find_element(selector_type, selector, timeout=10):
+            try:
+                if selector_type == "xpath":
+                    element = WebDriverWait(driver, timeout).until(
+                        EC.presence_of_element_located((By.XPATH, selector))
+                    )
+                    return element.text.strip()
+                else:  # css
+                    element = WebDriverWait(driver, timeout).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    return element.text.strip()
+            except:
+                return "N/A"
+        
+        # Try the main XPath first, then fallback to other selectors
+        website_name = safe_find_element("xpath", "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[1]/div[2]/div/div/div/span")
+        
+        # If XPath fails, try to find any website name element
+        if website_name == "N/A":
+            website_name = safe_find_element("css", "h2, .website-name, [class*='website']")
+        
+        website_traffic = safe_find_element("xpath", "/html/body/div[6]/div/div/div/div/div[2]/div[1]/div/div/div[2]/div[2]/div/div/div/span")
+        
+        # If traffic XPath fails, look for traffic numbers in the page
+        if website_traffic == "N/A":
+            # Try to find traffic pattern in page text
+            traffic_match = re.search(r'([\d,]+)\s*(monthly|visits|traffic)', driver.page_source, re.IGNORECASE)
+            website_traffic = traffic_match.group(1) if traffic_match else "N/A"
 
-        # Extract top country data from first table
-        top_country_element = driver.find_element(By.CSS_SELECTOR, "table:nth-of-type(1) tbody tr:first-child")
-        top_country_raw = top_country_element.text.strip() if top_country_element else "N/A"
-
-        # Extract top keyword data from second table  
-        top_keyword_element = driver.find_element(By.CSS_SELECTOR, "table:nth-of-type(2) tbody tr:first-child")
-        top_keyword_raw = top_keyword_element.text.strip() if top_keyword_element else "N/A"
+        # Extract table data with fallbacks
+        top_country_raw = safe_find_element("css", "table:nth-of-type(1) tbody tr:first-child")
+        top_keyword_raw = safe_find_element("css", "table:nth-of-type(2) tbody tr:first-child")
 
         # Parse country data
-        country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
+        country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw) if top_country_raw != "N/A" else None
         if country_match:
             top_country = country_match.group(1)
             top_country_share = country_match.group(2)
@@ -71,7 +115,7 @@ def scrape_ahrefs_data(driver, url, max_wait_time):
             top_country, top_country_share = top_country_raw, "N/A"
 
         # Parse keyword data
-        keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
+        keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw) if top_keyword_raw != "N/A" else None
         if keyword_match:
             top_keyword = keyword_match.group(1)
             keyword_position = keyword_match.group(2)
@@ -92,6 +136,12 @@ def scrape_ahrefs_data(driver, url, max_wait_time):
         }
 
     except Exception as e:
+        error_msg = str(e)
+        if "cloudflare" in error_msg.lower() or "blocked" in error_msg.lower():
+            status = "Blocked by Cloudflare"
+        else:
+            status = f"Failed: {error_msg[:100]}"  # Trim long error messages
+        
         return {
             "URL": url,
             "Website": "Error",
@@ -101,7 +151,7 @@ def scrape_ahrefs_data(driver, url, max_wait_time):
             "Top Keyword": "Error",
             "Keyword Position": "Error",
             "Keyword Traffic": "Error",
-            "Status": f"Failed: {str(e)}"
+            "Status": status
         }
 
 # -------------------------------------------------------
@@ -125,36 +175,47 @@ if uploaded_file:
         processing_text.markdown("**Processing... Please wait!**")
 
         # -------------------------------------------------------
-        # USE EXACT SAME SETUP AS WORKING FACEBOOK SCRAPER
+        # Driver setup (same as Facebook scraper)
         # -------------------------------------------------------
         chrome_options = Options()
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        # Add more stealth options to avoid detection
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        # Use the same driver path as your working Facebook scraper
         driver_path = "/usr/bin/chromedriver"
-        
         service = Service(executable_path=driver_path)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        try:
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Execute CDP commands to avoid detection
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        except Exception as e:
+            st.error(f"Failed to start Chrome driver: {e}")
+            st.stop()
 
-        results, success_count, fail_count = [], 0, 0
+        results, success_count, fail_count, blocked_count = [], 0, 0, 0
         batch_start_time = time.time()
 
         # -------------------------------------------------------
-        # Main scraping loop - FIXED
+        # Main scraping loop
         # -------------------------------------------------------
         for idx, raw_url in enumerate(df[url_column], start=1):
             url = str(raw_url).strip()
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
 
-            # Use the fixed scraping function
+            # Use the improved scraping function
             result = scrape_ahrefs_data(driver, url, max_wait_time)
             results.append(result)
             
             if result["Status"] == "Success":
                 success_count += 1
+            elif "Blocked" in result["Status"]:
+                blocked_count += 1
             else:
                 fail_count += 1
 
@@ -180,6 +241,7 @@ if uploaded_file:
                 <p>Total URLs: <b>{total_urls}</b></p>
                 <p>Processed: <b>{idx}</b></p>
                 <p>✅ Success: <b>{success_count}</b></p>
+                <p>🚫 Blocked: <b>{blocked_count}</b></p>
                 <p>❌ Failed: <b>{fail_count}</b></p>
                 """,
                 unsafe_allow_html=True
@@ -200,4 +262,4 @@ if uploaded_file:
                 mime="text/csv"
             )
         
-        st.success(f"🎉 Processing complete! Success: {success_count}, Failed: {fail_count}")
+        st.success(f"🎉 Processing complete! Success: {success_count}, Blocked: {blocked_count}, Failed: {fail_count}")
