@@ -19,14 +19,6 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 
-# Embed minimal CSS directly
-st.markdown("""
-<style>
-    .states_p { font-size: 16px; margin: 5px 0; }
-    p { font-size: 14px; color: #333; }
-    .debug-log { font-size: 12px; color: #666; }
-</style>
-""", unsafe_allow_html=True)
 
 # ---------------------------- 
 # 1️⃣ User inputs
@@ -36,7 +28,14 @@ max_wait_time = st.number_input(
     "Set maximum wait time per URL (seconds, min 30)",
     min_value=30, max_value=50000, value=60, step=5
 )
+def load_css():
+    try:
+        with open("style.css") as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except:
+        st.warning("No CSS loaded.")
 
+load_css()
 # ---------------------------- 
 # 2️⃣ File handling
 # ---------------------------- 
@@ -71,6 +70,7 @@ if uploaded_file:
 
         # Initialize Chrome driver with enhanced options
         chrome_options = webdriver.ChromeOptions()
+        chrome_options.add_argument('--headless=new')  # Use new headless mode
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
