@@ -2,6 +2,3 @@ streamlit
 pandas
 selenium
 undetected-chromedriver
-webdriver-manager
-openpyxl
-selenium-stealth
