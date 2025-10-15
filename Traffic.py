@@ -1,11 +1,6 @@
 import os
 import streamlit as st
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -15,6 +10,7 @@ import re
 from io import BytesIO
 from datetime import timedelta
 import random
+import undetected_chromedriver as uc
 
 # -------------------------------------------------------
 # Streamlit setup
@@ -315,39 +311,28 @@ def scrape_ahrefs_data(driver, url, max_wait_time):
 # Driver Setup Function
 # -------------------------------------------------------
 def setup_driver():
-    chrome_options = Options()
+    options = uc.ChromeOptions()
     # Optionally disable headless for better success (comment out if running locally)
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     
     # Add a realistic user-agent
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
+    options.add_argument(f"user-agent={user_agent}")
     
     # Set window size to mimic a real browser
-    chrome_options.add_argument("--window-size=1920,1080")
+    options.add_argument("--window-size=1920,1080")
     
     # Optional: Add proxy for residential IPs (replace with your proxy details)
-    # chrome_options.add_argument("--proxy-server=http://your_proxy:port")
+    # options.add_argument("--proxy-server=http://your_proxy:port")
     
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    driver = uc.Chrome(options=options)
     
-    # Apply stealth settings
-    stealth(
-        driver,
-        languages=["en-US", "en"],
-        vendor="Google Inc.",
-        platform="Win32",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
-        fix_hairline=True,
-    )
-    
-    # Remove webdriver property
+    # Remove webdriver property (undetected_chromedriver handles much of this internally)
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     return driver
 
