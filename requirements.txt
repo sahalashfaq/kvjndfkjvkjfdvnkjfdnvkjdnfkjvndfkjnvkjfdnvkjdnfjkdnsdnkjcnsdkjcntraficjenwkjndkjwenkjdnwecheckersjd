@@ -3,3 +3,4 @@ pandas
 undetected-chromedriver
 selenium
 openpyxl
+ChromeDriverManager
