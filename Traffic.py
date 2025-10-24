@@ -9,6 +9,12 @@ import re
 from io import BytesIO
 from datetime import timedelta
 
+import os
+
+os.environ["CHROME_BIN"] = "/usr/bin/chromium"
+os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
+
+
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 # Load CSS
 def load_css():
@@ -207,3 +213,4 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("All URLs processed successfully!")
+
