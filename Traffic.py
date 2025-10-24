@@ -1,229 +1,117 @@
-import streamlit as st
+import os
+import time
+import re
 import pandas as pd
-from seleniumbase import Driver
+import streamlit as st
+from io import BytesIO
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-import re
-from io import BytesIO
-from datetime import timedelta
+import chromedriver_autoinstaller
 
-import os, chromedriver_autoinstaller
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+# --------------------------------------------
+# Streamlit Page Setup
+# --------------------------------------------
+st.set_page_config(page_title="Ahrefs Traffic Checker", layout="centered")
 
-# force headless Chromium inside Streamlit Cloud
-os.environ["PATH"] += os.pathsep + "/usr/bin"
-chromedriver_autoinstaller.install()
-
-chrome_options = Options()
-chrome_options.add_argument("--headless=new")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-chrome_options.binary_location = "/usr/bin/chromium"
-
-driver = webdriver.Chrome(options=chrome_options)
-
-
-st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
-# Load CSS
 def load_css():
     try:
         with open("style.css") as f:
-            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    except:
-        st.warning("No CSS loaded.")
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        pass
 
 load_css()
-# ----------------------------
-# 1️⃣ User inputs
-# ----------------------------
-uploaded_file = st.file_uploader("Upload CSV/XLSX file containing URLs To check website's Traffic", type=["csv", "xlsx"])
-max_wait_time = st.number_input(
-    "Set maximum wait time per URL (seconds, min 30)",
-    min_value=30, max_value=50000, value=30, step=5
+
+st.title("🌐 Ahrefs Batch Traffic Checker")
+st.markdown(
+    "Upload a CSV/XLSX file containing website URLs, and this tool will fetch basic traffic info from Ahrefs."
 )
 
-# ----------------------------
-# 2️⃣ File handling
-# ----------------------------
-if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+# --------------------------------------------
+# File Upload + User Options
+# --------------------------------------------
+uploaded_file = st.file_uploader("📂 Upload CSV/XLSX file", type=["csv", "xlsx"])
+max_wait_time = st.number_input(
+    "⏱ Set maximum wait time per URL (seconds, min 20)", min_value=20, max_value=300, value=30
+)
 
-    total_urls = len(df)
-    estimated_total_time = total_urls * max_wait_time
-    st.markdown("<p style='color:var(--indigo-color);'>∵ More Time ∝ More Perfect Results</p>",unsafe_allow_html=True)
-    st.markdown("<p style='font-size:large;margin-bottom:0px;'>Preview of uploaded file:</p>",unsafe_allow_html=True)
+# --------------------------------------------
+# Handle Uploaded File
+# --------------------------------------------
+if uploaded_file:
+    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+    url_column = st.selectbox("Select column containing URLs", df.columns)
     st.dataframe(df.head())
 
-    url_column = st.selectbox("Select the column containing URLs", df.columns)
-    start_btn = st.button("Start Processing")
+    if st.button("🚀 Start Checking"):
+        st.info("Initializing headless browser... Please wait.")
+        chromedriver_autoinstaller.install()  # installs matching driver
 
-    # ----------------------------
-    # 3️⃣ Start processing
-    # ----------------------------
-    if start_btn:
-        # Placeholders for dynamic updates
-        processing_text = st.empty()
-        time_placeholder = st.empty()
-        progress_bar = st.progress(0)
-        table_area = st.empty()
-        stats_area = st.empty()
+        # Chrome Options
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920x1080")
 
-        processing_text.markdown("**Processing... Please wait!**")
+        driver = webdriver.Chrome(service=Service(), options=options)
 
-        # Initialize driver
-        driver = Driver(uc=True, headless=True)
-
-        # Results and counters
         results = []
-        success_count = 0
-        fail_count = 0
-        batch_start_time = time.time()
+        progress = st.progress(0)
+        status_text = st.empty()
 
-        for idx, user_url in enumerate(df[url_column], start=1):
-            status = "Success"
-            with st.spinner(f"Processing URL {idx}/{total_urls}: {user_url}"):
-                try:
-                    ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={user_url}&mode=subdomains"
-                    driver.uc_open_with_reconnect(ahrefs_url, reconnect_time=10)
+        for i, url in enumerate(df[url_column], start=1):
+            clean_url = str(url).strip()
+            ahrefs_url = f"https://ahrefs.com/traffic-checker/?input={clean_url}&mode=subdomains"
+            status_text.text(f"Processing ({i}/{len(df)}): {clean_url}")
 
-                    # ----------------------------
-                    # Cloudflare handling
-                    # ----------------------------
-                    start_time = time.time()
-                    cf_cleared = False
-                    while True:
-                        try:
-                            driver.uc_gui_click_captcha()
-                        except:
-                            pass
-                        cookies = {c['name']: c['value'] for c in driver.get_cookies()}
-                        if "cf_clearance" in cookies:
-                            cf_cleared = True
-                            break
-                        if time.time() - start_time > max_wait_time:
-                            break
-                        time.sleep(2)
-
-                    if not cf_cleared:
-                        status = "Failed: Cloudflare"
-                        raise Exception("Cloudflare not cleared")
-
-                    # ----------------------------
-                    # Extract modal
-                    # ----------------------------
-                    try:
-                        modal_elements = WebDriverWait(driver, max_wait_time).until(
-                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".ReactModalPortal"))
-                        )
-                    except:
-                        status = "Failed: No modal"
-                        raise Exception("No modal found")
-
-                    elem = modal_elements[0]
-
-                    def safe_extract_css(selector):
-                        try:
-                            return WebDriverWait(elem, max_wait_time).until(
-                                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                            ).text.strip()
-                        except:
-                            return "Error"
-
-                    # Extract data
-                    website_name = safe_extract_css("h2")
-                    website_traffic = safe_extract_css(
-                        "span.css-vemh4e.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1x5n6ob"
-                    )
-                    traffic_value = safe_extract_css(
-                        "span.css-6s0ffe.css-rr08kv-textFontWeight.css-oi9nct-textDisplay.css-1jyb9g4"
-                    )
-                    top_country_raw = safe_extract_css("table:nth-of-type(1) tbody tr:first-child")
-                    top_keyword_raw = safe_extract_css("table:nth-of-type(2) tbody tr:first-child")
-
-                    # Process country
-                    country_match = re.match(r"(.+?)\s+([\d.%]+)", top_country_raw)
-                    if country_match:
-                        top_country = country_match.group(1)
-                        top_country_share = country_match.group(2)
-                    else:
-                        top_country = top_country_raw
-                        top_country_share = "Error"
-
-                    # Process keyword
-                    keyword_match = re.match(r"(.+?)\s+(\d+)\s+([\d,K,M]+)", top_keyword_raw)
-                    if keyword_match:
-                        top_keyword = keyword_match.group(1)
-                        keyword_position = keyword_match.group(2)
-                        top_keyword_traffic = keyword_match.group(3)
-                    else:
-                        top_keyword = top_keyword_raw
-                        keyword_position = "Error"
-                        top_keyword_traffic = "Error"
-
-                    # Append results
-                    results.append({
-                        "URL": user_url,
-                        "Website": website_name,
-                        "Website Traffic": website_traffic,
-                        "Top Country": top_country,
-                        "Top Country Share": top_country_share
-                        
-                    })
-                    success_count += 1
-
-                except Exception as e:
-                    results.append({
-                        "URL": user_url,
-                        "Website": "Error",
-                        "Website Traffic": "Error",
-                        "Top Country": "Error",
-                        "Top Country Share": "Error",
-                    })
-                    fail_count += 1
-
-                # ----------------------------
-                # Live updates
-                # ----------------------------
-                progress_bar.progress(min(int(idx / total_urls * 100), 100))
-                table_area.dataframe(pd.DataFrame(results))
-                stats_area.markdown(
-                    f"""
-                    <p class="states_p">Total URLs: <b>{total_urls}</b></p>
-                    <p class="states_p">Processed: <b>{idx}</b></p>
-                    <p class="states_p">Success: <b>{success_count}</b></p>
-                    <p class="states_p">Failed: <b>{fail_count}</b></p>
-                    """,unsafe_allow_html=True
+            try:
+                driver.get(ahrefs_url)
+                WebDriverWait(driver, max_wait_time).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "body"))
                 )
+                time.sleep(5)  # allow data to load
 
-                # Estimated remaining time
-                elapsed = time.time() - batch_start_time
-                avg_per_url = elapsed / idx
-                remaining_time = avg_per_url * (total_urls - idx)
-                
+                # Try to extract key data (simplified version)
+                title = driver.title
+                text = driver.page_source
+
+                traffic = re.search(r'(?i)([\d,\.]+)\s+visits', text)
+                traffic_val = traffic.group(1) if traffic else "N/A"
+
+                results.append({
+                    "URL": clean_url,
+                    "Page Title": title,
+                    "Estimated Traffic": traffic_val,
+                    "Status": "Success"
+                })
+            except Exception as e:
+                results.append({
+                    "URL": clean_url,
+                    "Page Title": "Error",
+                    "Estimated Traffic": "N/A",
+                    "Status": f"Failed: {str(e)[:60]}"
+                })
+
+            progress.progress(int(i / len(df) * 100))
+
         driver.quit()
-        processing_text.markdown("**Batch processing completed!**")
 
-        # ----------------------------
-        # Download CSV
-        # ----------------------------
-        st.markdown("<p style='font-weight:400;margin:20px 0px;'>If There are any Error website then recheck the website with More Increased Time...</p>",unsafe_allow_html=True)
-        if results:
-            result_df = pd.DataFrame(results)
-            csv_buffer = BytesIO()
-            result_df.to_csv(csv_buffer, index=False)
-            st.download_button(
-                "Download Results as CSV",
-                csv_buffer.getvalue(),
-                file_name="ahrefs_batch_results.csv",
-                mime="text/csv"
-            )
-        st.success("All URLs processed successfully!")
+        result_df = pd.DataFrame(results)
+        st.success("✅ Processing complete!")
+        st.dataframe(result_df)
 
-
-
+        # Download Button
+        buffer = BytesIO()
+        result_df.to_csv(buffer, index=False)
+        st.download_button(
+            label="📥 Download Results as CSV",
+            data=buffer.getvalue(),
+            file_name="ahrefs_traffic_results.csv",
+            mime="text/csv"
+        )
