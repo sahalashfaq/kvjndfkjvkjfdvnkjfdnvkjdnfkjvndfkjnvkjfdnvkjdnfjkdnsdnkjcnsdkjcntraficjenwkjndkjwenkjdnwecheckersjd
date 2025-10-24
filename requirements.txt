@@ -1,4 +1,5 @@
 streamlit==1.49.1
 pandas
-pyppeteer
+requests
+beautifulsoup4
 openpyxl
