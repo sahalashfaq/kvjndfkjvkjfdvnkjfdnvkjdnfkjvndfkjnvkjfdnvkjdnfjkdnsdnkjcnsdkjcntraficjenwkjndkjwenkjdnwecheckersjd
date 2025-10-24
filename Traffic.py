@@ -11,9 +11,11 @@ from datetime import timedelta
 
 import os
 
+# Force Streamlit Cloud to use system Chromium
+os.environ["PATH"] += os.pathsep + "/usr/bin"
 os.environ["CHROME_BIN"] = "/usr/bin/chromium"
 os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
-
+os.environ["SB_CHROME_BINARY_PATH"] = "/usr/bin/chromium"
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 # Load CSS
@@ -213,4 +215,5 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("All URLs processed successfully!")
+
 
