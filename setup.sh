@@ -1,8 +1,18 @@
 #!/bin/bash
-# Install Chrome & Driver for Streamlit Cloud
-sudo apt-get update
-sudo apt-get install -y chromium-browser chromium-chromedriver
+set -e
 
-# Set environment variables for SeleniumBase
-export CHROME_BIN=/usr/bin/chromium-browser
+echo "📦 Updating system packages..."
+sudo apt-get update -y
+
+echo "🌐 Installing Chromium and Chromedriver..."
+sudo apt-get install -y chromium chromium-driver
+
+echo "✅ Setting environment variables..."
+export CHROME_BIN=/usr/bin/chromium
 export CHROMEDRIVER_PATH=/usr/bin/chromedriver
+
+echo "🔍 Verifying installations..."
+chromium --version
+chromedriver --version
+
+echo "✅ Chromium setup complete!"
