@@ -1,25 +1,40 @@
-import requests, re, pandas as pd, streamlit as st
-from bs4 import BeautifulSoup
-from io import BytesIO
+import streamlit as st
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-st.title("Ahrefs Traffic Checker (Requests mode)")
-file = st.file_uploader("Upload CSV", type=["csv","xlsx"])
-if file:
-    df = pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
-    col = st.selectbox("Select URL column", df.columns)
-    if st.button("Start"):
-        results = []
-        for url in df[col]:
-            try:
-                r = requests.get(f"https://ahrefs.com/traffic-checker/?input={url}&mode=subdomains", timeout=30)
-                soup = BeautifulSoup(r.text, "html.parser")
-                title = soup.title.text if soup.title else "N/A"
-                visits = re.search(r"([\d,\.]+)\s+visits", r.text, re.I)
-                traffic = visits.group(1) if visits else "N/A"
-                results.append({"URL": url, "Title": title, "Traffic": traffic, "Status": "Success"})
-            except Exception as e:
-                results.append({"URL": url, "Title": "Error", "Traffic": "N/A", "Status": str(e)[:80]})
-        res = pd.DataFrame(results)
-        st.dataframe(res)
-        buf = BytesIO(); res.to_csv(buf,index=False)
-        st.download_button("Download CSV", buf.getvalue(), "results.csv", "text/csv")
+# Configure Chrome options for Streamlit Cloud (headless, no sandbox, etc.)
+@st.cache_resource
+def get_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Run in background (no GUI)
+    chrome_options.add_argument("--no-sandbox")  # Bypass OS security model
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource issues
+    chrome_options.add_argument("--disable-gpu")  # Disable GPU acceleration
+    chrome_options.add_argument("--window-size=1920x1080")  # Set window size for consistency
+    
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
+
+st.title("Selenium App on Streamlit Cloud")
+
+if st.button("Scrape Example (e.g., Wikipedia)"):
+    with st.spinner("Scraping..."):
+        driver = get_driver()
+        try:
+            driver.get("https://en.wikipedia.org/wiki/Python_(programming_language)")
+            wait = WebDriverWait(driver, 10)
+            title = wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            st.success(f"Page title: {title.text}")
+            # Add your scraping logic here (e.g., find elements, extract data)
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+        finally:
+            driver.quit()  # Always close the driver
+
+st.info("This app uses Selenium to scrape Wikipedia. Customize the scraping logic as needed.")
