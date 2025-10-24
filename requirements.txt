@@ -1,7 +1,7 @@
 streamlit==1.49.1
 pandas
+selenium
 seleniumbase
 undetected-chromedriver
-openpyxl
-requests
 webdriver-manager
+openpyxl
