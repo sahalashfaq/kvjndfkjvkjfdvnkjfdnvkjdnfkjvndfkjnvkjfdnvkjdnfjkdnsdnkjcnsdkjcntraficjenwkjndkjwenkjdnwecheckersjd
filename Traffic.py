@@ -9,13 +9,22 @@ import re
 from io import BytesIO
 from datetime import timedelta
 
-import os
+import os, chromedriver_autoinstaller
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-# Force Streamlit Cloud to use system Chromium
+# force headless Chromium inside Streamlit Cloud
 os.environ["PATH"] += os.pathsep + "/usr/bin"
-os.environ["CHROME_BIN"] = "/usr/bin/chromium"
-os.environ["CHROMEDRIVER_PATH"] = "/usr/bin/chromedriver"
-os.environ["SB_CHROME_BINARY_PATH"] = "/usr/bin/chromium"
+chromedriver_autoinstaller.install()
+
+chrome_options = Options()
+chrome_options.add_argument("--headless=new")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.binary_location = "/usr/bin/chromium"
+
+driver = webdriver.Chrome(options=chrome_options)
+
 
 st.set_page_config(page_title="Ahrefs Batch Extractor", layout="centered")
 # Load CSS
@@ -215,5 +224,6 @@ if uploaded_file:
                 mime="text/csv"
             )
         st.success("All URLs processed successfully!")
+
 
 
